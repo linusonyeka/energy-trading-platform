@@ -178,3 +178,100 @@
         )
     )
 )
+
+;; Cancel an active energy offer
+(define-public (cancel-energy-offer (offer-id uint))
+    (let
+        ((producer-address tx-sender)
+         (producer-data (unwrap! (map-get? energy-producers producer-address) (err ERR-PRODUCER-NOT-FOUND)))
+         (offer-data (unwrap! (map-get? energy-offers {producer: producer-address, offer-id: offer-id}) (err ERR-ENERGY-OFFER-NOT-FOUND))))
+        
+        (asserts! (get is-active offer-data) (err ERR-ENERGY-OFFER-NOT-FOUND))
+        
+        ;; Return energy to available balance
+        (map-set energy-producers
+            producer-address
+            (merge producer-data {
+                energy-available: (+ (get energy-available producer-data) (get energy-amount offer-data))
+            })
+        )
+        
+        ;; Mark offer as inactive
+        (map-set energy-offers
+            {producer: producer-address, offer-id: offer-id}
+            (merge offer-data {
+                is-active: false
+            })
+        )
+        
+        (ok true)
+    )
+)
+
+;; Private functions
+
+;; Calculate new reputation score
+(define-private (calculate-new-reputation (current-reputation uint) (positive-feedback uint))
+    (let
+        ((max-reputation u100))
+        (if (>= (+ current-reputation positive-feedback) max-reputation)
+            max-reputation
+            (+ current-reputation positive-feedback)
+        )
+    )
+)
+
+;; Read-only functions
+
+;; Get producer profile
+(define-read-only (get-producer-profile (producer-address principal))
+    (map-get? energy-producers producer-address)
+)
+
+;; Get consumer profile
+(define-read-only (get-consumer-profile (consumer-address principal))
+    (map-get? energy-consumers consumer-address)
+)
+
+;; Get offer details
+(define-read-only (get-offer-details (producer-address principal) (offer-id uint))
+    (map-get? energy-offers {producer: producer-address, offer-id: offer-id})
+)
+
+;; Get transaction details
+(define-read-only (get-transaction-details (transaction-id uint))
+    (map-get? trade-history {transaction-id: transaction-id})
+)
+
+;; Get platform metrics
+(define-read-only (get-platform-metrics)
+    {
+        producer-count: (var-get registered-producer-count),
+        consumer-count: (var-get registered-consumer-count),
+        total-energy-traded: (var-get energy-trade-volume),
+        platform-revenue: (var-get platform-revenue),
+        transaction-fee-percent: (var-get transaction-fee-percent)
+    }
+)
+
+;; Administrative functions
+
+;; Update transaction fee (only administrator)
+(define-public (update-transaction-fee (new-fee-percent uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get platform-admin)) (err ERR-UNAUTHORIZED-ACCESS))
+        (asserts! (<= new-fee-percent u10) (err ERR-INVALID-OFFER-PRICE)) ;; Max 10% fee
+        (var-set transaction-fee-percent new-fee-percent)
+        (ok true)
+    )
+)
+
+;; Transfer platform administration
+(define-public (transfer-admin-control (new-admin principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get platform-admin)) (err ERR-UNAUTHORIZED-ACCESS))
+        (asserts! (not (is-eq new-admin (var-get platform-admin))) (err ERR-UNAUTHORIZED-ACCESS))
+        (var-set platform-admin new-admin)
+        (ok true)
+    )
+)
